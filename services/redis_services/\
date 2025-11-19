@@ -1,0 +1,124 @@
+from redis_connection import RedisManager
+from typing import Dict, List, Optional, Any
+from redis.exceptions import ConnectionError as RedisConnectionError
+from  redis.asyncio import Redis
+import logging
+import asyncio
+
+logger = logging.getLogger(__name__)
+
+class BaseRedis:
+    def __init__(self, manager: RedisManager, namespace: str = 'ecom:'):
+        self.manager = manager
+        self.namespace = namespace.rstrip(':') + ':'
+        self._client : Optinal[Redis] = None
+
+    async def _get_client(self):
+        if self._client is None:
+            self._client = await self.manager.get_client()
+            await self.manager.get_connection()
+        return self._client
+
+    async def _key(self, key: str):
+        return f"{self.namespace}{key}"
+
+    async def set(self, key:str, value:Any, ttl:Optional[int]=300, serialize: bool=True):
+        client = self._get_client()
+        try:
+            val = json.dumps(value) if serialize else value
+            await client.set(self._key(key), value, ex=ttl)
+            logger.debug(f"Set key {key} with TTL {ttl}")
+            return True
+        except RedisError as e:
+            logger.error(f"Failed to set {key}: {e}")
+            raise RedisError(f"Set operation failed for {key}") from e
+
+    async def get(self, key: str, deserialize: bool = True):
+        client = self._get_client()
+        try:
+            val = await client.get(self._key(key))
+            if val is None:
+                raise RedisNotFoundError(f"Key {key} not found")
+            return json.loads(val) if desirialiaze and val else val
+        except RedisError as e:
+            logger.warning(f"Failed to get {key}: {e}")
+            raise RedisError(f"Get operation failed for {key}") from e
+
+    async def hset(self, key:str, field: str, value: Any, ttl: Optional[int] = None):
+        client = self._get_client()
+        try:
+            await client.hset(self._key(key), field, value)
+            if ttl:
+                await client.expire(self._key(key), ttl)
+            return True
+        except RedisError as e:
+            raise RedisError(f"HSet failed for {key}:{field}") from e
+
+    async def hget(self, key:str, filed: str):
+        client = await self._get_client()
+        try:
+            val = await client.hget(self._key(key), field)
+            if val is None:
+                raise RedisNotFoundError(f"Hash field {key}:{field} not found")
+            return val
+        except RedisError as e:
+            raise RedisError(f"HGet failed for {key}:{field}") from e
+
+    async def  delete(self, key: str):
+        client = await self._get_client()
+        try:
+            deleted = await client.delete(self._key(key))
+            return deleted > 0
+        except RedisError as e:
+            raise RedisError(f"Delete failed for {key}") from e
+
+    async def lpush(self, key: str, *values: Any):
+        client = await self._get_client()
+        try:
+            return await client.lpush(self._key(key), *values)
+        except RedisError as e:
+            raise RedisError(f"LPush failed for {key}") from e
+
+    async def rpush(self, key, *values):
+        client = self._get_client()
+        try:
+            return await client.rpush(self._key(key), *values)
+        except RedisError as e:
+            raise RedisError(f"RPush failed for {key}") from e
+
+    async def rpop(self, key, count: int = 1):
+        client = await self._grt_client()
+        try:
+            value = await client.rpop(self._key(key), count)
+            if value is None:
+                raise RedisNotFoundError(f"List {key} empty")
+            return value
+        except RedisError as e:
+            raise RedisError(f"RPop failed for {key}") from e
+    
+    async def llen(self, key:str):
+        client = await self._get_client()
+        try:
+            return await client.llen(self._key(key))
+        except RedisError as e:
+            raise RedisError(f"LLen failed for {key}") from e
+
+    async def sadd(self, key: str, *members):
+        client = await self._get_client()
+        try:
+            result = await client.sadd(self._key(key), *members)
+            return result
+        except RedisError as e:
+            raise RedisError(f"SRem failed for {key}") from e
+    
+    async def smembers(self, key: str) -> List[Any]:
+        client = await self._get_client()
+        try:
+            members = await client.smembers(self._key(key))
+            if not members:
+                raise RedisNotFoundError(f"Set {key} empty")
+            return list(members)
+        except RedisError as e:
+            raise RedisError(f"SMembers failed for {key}") from e
+
+
